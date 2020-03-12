@@ -74,11 +74,11 @@ class Field:
                     self.latest_time = dateutil.parser.parse(latest_time).replace(microsecond=0)
                 except Exception as e:
                     raise ValidatorException("Unable to parse configuration file timestamp LatestTime for field %s=%s, error: %s" % (key, field_config, str(e)))
-        
+
         regex = field_config.get('RegularExpression')
         if regex is not None:
             self.regex = regex
-        
+
         self.allow_empty = False
         allow_empty = field_config.get('AllowEmpty')
         if allow_empty is not None:
@@ -247,7 +247,7 @@ class Field:
                         if hasattr(self, 'regex'):
                             match = re.match(self.regex, data_field_value)
                             if match is None:
-                                return FieldValidationResult(False, "Regular Expressions found no match in '%s'" % self.path) 
+                                return FieldValidationResult(False, "Regular Expressions found no match in '%s'" % self.path)
                             elif not(match.group() == data_field_value):
                                 return FieldValidationResult(False, "Regular Expressions do not completely match in '%s'" % self.path)
                     except Exception as e:
@@ -416,7 +416,7 @@ class TestCase:
             config['EqualsValue'] = new_equals_value
         return equals_value, config
 
-    def validate_queue(self, msg_queue):
+    def validate_queue(self, msg_queue, skip=False):
         results = []
         msg_list = []
         msg_count = 1
@@ -436,11 +436,13 @@ class TestCase:
             msg_count += 1
             # if self.data_type == "json":
             # serial_id = str(current_msg['metadata']['serialId'])
-
-            field_validations = self._validate(current_msg)
+            if skip:
+                field_validations = []
+            else:
+                field_validations = self._validate(current_msg)
             results.append(RecordValidationResult(serial_id, field_validations, current_msg))
 
-        if self.SequentialValidation:
+        if self.SequentialValidation and not skip:
             seq = Sequential(self.skip_sequential_checks)
             sorted_list = sorted(msg_list, key=lambda msg: msg['metadata']['serialId']['serialNumber'])
 
