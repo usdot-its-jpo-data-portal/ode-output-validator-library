@@ -20,7 +20,6 @@ TYPE_ENUM = 'enum'
 TYPE_CHOICE = 'choice'
 TYPE_TIMESTAMP = 'timestamp'
 TYPE_STRING = 'string'
-TYPE_ENUM_DICT = 'enumdict' # when values are stored as a dict with a single key like so: {"enumValue": None}
 TYPE_BIT_STRING = 'bitstring'
 
 
@@ -262,11 +261,6 @@ class Field:
                                 return FieldValidationResult(False, "Regular Expressions do not completely match in '%s'" % self.path)
                     except Exception as e:
                         return FieldValidationResult(False, "failure to perform string validation, error: %s" % (str(e)), self.path)
-                elif self.type == TYPE_ENUM_DICT:
-                    if data_field_value and type(data_field_value) is not dict:
-                        data_field_value = json.loads(data_field_value)
-                    if tuple(data_field_value)[0] not in self.values:
-                        return FieldValidationResult(False, "Value '%s' not in list of known enumdict values: [%s]" % (str(tuple(data_field_value)[0] ), ', '.join(map(str, self.values))), self.path)
                 elif self.type == TYPE_BIT_STRING:
                     if type(data_field_value) != str and set(data_field_value) != {'0', '1'}:
                         return FieldValidationResult(False, "Bit string '%s' is not a bitstring".format(str(data_field_value)), self.path)
