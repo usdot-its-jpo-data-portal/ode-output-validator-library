@@ -291,8 +291,13 @@ class TestCase:
         self.field_list = []
         self.skip_sequential_checks = set()
 
+        # parse config object is no file is passed
+        if configObj:
+            # parse passed config object
+            for key, field_config in configObj.items():
+                self.field_list.append(Field(key, field_config, self))  # Adds field name and parameters to field_list
         # parse config file
-        if Path(filepath).is_file():
+        elif Path(filepath).is_file():
             self.config.read(filepath)
 
             if self.config.has_section("_settings"):
@@ -309,11 +314,6 @@ class TestCase:
                 if key != "_settings" and key.count('.list') == 0:
                     self.field_list.append(Field(key, self.config[key], self))  # Adds field name and parameters to field_list
 
-        # parse config object is no file is passed
-        elif configObj:
-            # parse passed config object
-            for key, field_config in configObj.items():
-                self.field_list.append(Field(key, field_config, self))  # Adds field name and parameters to field_list
         # throw error if neither config file nor config object is passed
         else:
             raise ValidatorException("Custom configuration file '%s' could not be found" % filepath)
