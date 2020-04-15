@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 import json
 import logging
 import pkg_resources
+import pytz
 import queue
 import re
 import copy
@@ -19,6 +20,7 @@ TYPE_ENUM = 'enum'
 TYPE_CHOICE = 'choice'
 TYPE_TIMESTAMP = 'timestamp'
 TYPE_STRING = 'string'
+TYPE_BIT_STRING = 'bitstring'
 
 
 class Field:
@@ -44,6 +46,9 @@ class Field:
             self.alt = field_config.get('Alt')
 
         # extract constraints
+        bitstring_len = field_config.get('BitStringLength')
+        if bitstring_len is not None:
+            self.bitstring_len = Decimal(bitstring_len)
         upper_limit = field_config.get('UpperLimit')
         if upper_limit is not None:
             self.upper_limit = Decimal(upper_limit)
@@ -59,6 +64,9 @@ class Field:
         equals_value = field_config.get('EqualsValue')
         if equals_value is not None:
             self.equals_value = json.loads(str(equals_value))
+        pytz_timezone = field_config.get('PYTZTimeZone')
+        if pytz_timezone is not None:
+            self.pytz_timezone = pytz_timezone
         earliest_time = field_config.get('EarliestTime')
         if earliest_time is not None:
             try:
@@ -74,11 +82,11 @@ class Field:
                     self.latest_time = dateutil.parser.parse(latest_time).replace(microsecond=0)
                 except Exception as e:
                     raise ValidatorException("Unable to parse configuration file timestamp LatestTime for field %s=%s, error: %s" % (key, field_config, str(e)))
-        
+
         regex = field_config.get('RegularExpression')
         if regex is not None:
             self.regex = regex
-        
+
         self.allow_empty = False
         allow_empty = field_config.get('AllowEmpty')
         if allow_empty is not None:
@@ -196,7 +204,7 @@ class Field:
         if data_field_value is None:
             return FieldValidationResult(False, ("Field missing: " + self.path), self.path)
         else:
-            data_field_value = str(data_field_value).strip('"')
+            data_field_value = json.dumps(data_field_value).strip('"')
             if data_field_value == "":
                 if self.allow_empty:
                     return None
@@ -220,7 +228,8 @@ class Field:
                             time_value = dateutil.parser.parse(data_field_value)
                         else:
                             time_value = datetime.strptime(data_field_value, self.date_format)
-
+                        if hasattr(self, 'pytz_timezone'):
+                            time_value = time_value.replace(tzinfo=pytz.timezone(self.pytz_timezone))
                         if hasattr(self, 'earliest_time') and time_value < self.earliest_time:
                             return FieldValidationResult(False, "Timestamp value '%s' occurs before earliest limit '%s'" % (time_value, self.earliest_time), self.path)
 
@@ -247,11 +256,16 @@ class Field:
                         if hasattr(self, 'regex'):
                             match = re.match(self.regex, data_field_value)
                             if match is None:
-                                return FieldValidationResult(False, "Regular Expressions found no match in '%s'" % self.path) 
+                                return FieldValidationResult(False, "Regular Expressions found no match in '%s'" % self.path)
                             elif not(match.group() == data_field_value):
                                 return FieldValidationResult(False, "Regular Expressions do not completely match in '%s'" % self.path)
                     except Exception as e:
                         return FieldValidationResult(False, "failure to perform string validation, error: %s" % (str(e)), self.path)
+                elif self.type == TYPE_BIT_STRING:
+                    if type(data_field_value) != str and set(data_field_value) != {'0', '1'}:
+                        return FieldValidationResult(False, "Bit string '%s' is not a bitstring".format(str(data_field_value)), self.path)
+                    elif len(data_field_value) != self.bitstring_len:
+                        return FieldValidationResult(False, "Bit string '%s' is not the expected length: should contain {} elements".format(str(data_field_value), self.bitstring_len), self.path)
 
     def __str__(self):
         return json.dumps(self.to_json())
@@ -271,29 +285,38 @@ class Field:
 
 
 class TestCase:
-    def __init__(self, filepath=pkg_resources.resource_filename('odevalidator', 'configs/config.ini')):
+    def __init__(self, filepath=pkg_resources.resource_filename('odevalidator', 'configs/config.ini'), configObj=None):
         self.config = ConfigParser(interpolation=ExtendedInterpolation())
         self.record_parser = {"json": json.loads, "csv": self.parse_csv}
-
-        if not Path(filepath).is_file():
-            raise ValidatorException("Custom configuration file '%s' could not be found" % filepath)
-        self.config.read(filepath)
-
-        if self.config.has_section("_settings"):
-            self.data_type = self.config.get("_settings", "DataType")
-            self.SequentialValidation = self.config.getboolean("_settings", "Sequential")
-            if self.data_type == "csv":
-                self.has_header = self.config.getboolean("_settings", "HasHeader")
-            else:
-                self.has_header = False
-        else:
-            raise ValidatorException("Invalid config ini file, '_settings' field not defined.")
-
         self.field_list = []
         self.skip_sequential_checks = set()
-        for key in self.config.sections():  # Iterate through config file sections
-            if key != "_settings" and key.count('.list') == 0:
-                self.field_list.append(Field(key, self.config[key], self))  # Adds field name and parameters to field_list
+
+        # parse config object is no file is passed
+        if configObj:
+            # parse passed config object
+            for key, field_config in configObj.items():
+                self.field_list.append(Field(key, field_config, self))  # Adds field name and parameters to field_list
+        # parse config file
+        elif Path(filepath).is_file():
+            self.config.read(filepath)
+
+            if self.config.has_section("_settings"):
+                self.data_type = self.config.get("_settings", "DataType")
+                self.SequentialValidation = self.config.getboolean("_settings", "Sequential")
+                if self.data_type == "csv":
+                    self.has_header = self.config.getboolean("_settings", "HasHeader")
+                else:
+                    self.has_header = False
+            else:
+                raise ValidatorException("Invalid config ini file, '_settings' field not defined.")
+
+            for key in self.config.sections():  # Iterate through config file sections
+                if key != "_settings" and key.count('.list') == 0:
+                    self.field_list.append(Field(key, self.config[key], self))  # Adds field name and parameters to field_list
+
+        # throw error if neither config file nor config object is passed
+        else:
+            raise ValidatorException("Custom configuration file '%s' could not be found" % filepath)
 
     def _validate(self, data):
         validations = []
@@ -302,7 +325,10 @@ class TestCase:
         field_list = self.field_list + self.field_list_temp
         for field in field_list:
             result = field.validate(data)
-            validations.append(result)
+            if type(result) == list:
+                validations += result
+            else:
+                validations.append(result)
         return validations
 
     def populate_field_list(self, data):  # iniates recurcive function
